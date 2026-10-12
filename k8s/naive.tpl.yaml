@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bi-portal-naive
+  labels:
+    app: bi-portal-naive
+spec:
+  replicas: __REPLICAS__
+  strategy:
+    type: __STRATEGY__
+  selector:
+    matchLabels:
+      app: bi-portal-naive
+  template:
+    metadata:
+      labels:
+        app: bi-portal-naive
+    spec:
+      containers:
+        - name: portal
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DEPLOY_COLOR
+              value: "naive"
+            - name: APP_VERSION
+              value: "__VERSION__"
+            - name: BREAK_RELEASE
+              value: "__BREAK__"
+            - name: POWERBI_EMBED_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bi-config
+                  key: POWERBI_EMBED_URL
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bi-portal-naive
+spec:
+  type: LoadBalancer
+  selector:
+    app: bi-portal-naive
+  ports:
+    - port: 8081
+      targetPort: 8000

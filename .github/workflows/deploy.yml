@@ -1,0 +1,47 @@
+name: blue-green-deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "k8s/**", "scripts/**"]
+  workflow_dispatch:
+    inputs:
+      break_release:
+        description: "Simulate a defective release (readiness fails; traffic must not move)"
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t bi-portal:ci app
+      - name: Smoke test container
+        run: |
+          docker run -d --name portal -p 8000:8000 \
+            -e POWERBI_EMBED_URL=https://app.powerbi.com/reportEmbed?reportId=ci \
+            bi-portal:ci
+          sleep 4
+          curl -fsS http://localhost:8000/healthz
+          curl -fsS http://localhost:8000/version
+          docker rm -f portal
+
+  # Runs on a self-hosted runner installed on the Mac, because GitHub-hosted
+  # runners cannot reach the Docker Desktop cluster on localhost.
+  deploy:
+    needs: test
+    runs-on: self-hosted
+    env:
+      POWERBI_EMBED_URL: ${{ secrets.POWERBI_EMBED_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image into local Docker
+        run: |
+          VERSION="${GITHUB_SHA::7}"
+          docker build -t "bi-portal:${VERSION}" app
+      - name: Blue-green deploy
+        run: |
+          VERSION="${GITHUB_SHA::7}"
+          ./scripts/deploy.sh "bi-portal:${VERSION}" "${VERSION}" "${{ inputs.break_release || 'false' }}"

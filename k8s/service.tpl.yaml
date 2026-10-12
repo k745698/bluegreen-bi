@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bi-portal
+spec:
+  type: LoadBalancer
+  selector:
+    app: bi-portal
+    color: __COLOR__
+  ports:
+    - port: 8080
+      targetPort: 8000
