@@ -48,6 +48,7 @@ htmlcov/
 *.log
 *.tmp
 *.bak
+actions-runner/
 
 # Load Testing Artifacts (k6)
 loadtest/results/
