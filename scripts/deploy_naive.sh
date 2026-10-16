@@ -5,27 +5,24 @@
 # STRATEGY=RollingUpdate is a stronger baseline that Kubernetes does natively.
 #
 # Usage: POWERBI_EMBED_URL=<link> [STRATEGY=Recreate|RollingUpdate] ./scripts/deploy_naive.sh <image> <version> [break=false]
+#
+# Switching an existing Deployment between strategies can be rejected by the API
+# server; delete it first: kubectl delete deployment bi-portal-naive
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib.sh
 
 IMAGE="${1:?usage: deploy_naive.sh <image> <version> [break]}"
 VERSION="${2:?usage: deploy_naive.sh <image> <version> [break]}"
 BREAK="${3:-false}"
-: "${POWERBI_EMBED_URL:?set POWERBI_EMBED_URL}"
 STRATEGY="${STRATEGY:-Recreate}"
 REPLICAS="${REPLICAS:-2}"
 TIMEOUT="${ROLLOUT_TIMEOUT:-120s}"
 
-log() { echo "[$(date -u +%FT%TZ)] $*"; }
-
-kubectl create configmap bi-config \
-  --from-literal=POWERBI_EMBED_URL="${POWERBI_EMBED_URL}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+ensure_config
 
 log "naive update (${STRATEGY}) to ${VERSION}"
-sed -e "s|__IMAGE__|${IMAGE}|g" -e "s|__VERSION__|${VERSION}|g" -e "s|__BREAK__|${BREAK}|g" \
-    -e "s|__REPLICAS__|${REPLICAS}|g" -e "s|__STRATEGY__|${STRATEGY}|g" k8s/naive.tpl.yaml \
-  | kubectl apply -f -
+apply_release naive bi-portal-naive
 
 kubectl rollout status deployment/bi-portal-naive --timeout="${TIMEOUT}"
 log "naive update finished"

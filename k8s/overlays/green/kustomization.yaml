@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+nameSuffix: -green
+labels:
+  - pairs:
+      color: green
+    includeSelectors: true
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: bi-portal
+      spec:
+        template:
+          spec:
+            containers:
+              - name: portal
+                env:
+                  - name: DEPLOY_COLOR
+                    value: green

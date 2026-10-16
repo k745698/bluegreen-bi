@@ -3,19 +3,32 @@ name: blue-green-deploy
 on:
   push:
     branches: [main]
-    paths: ["app/**", "k8s/**", "scripts/**"]
+    paths: ["app/**", "k8s/**", "scripts/**", "tests/**"]
   workflow_dispatch:
     inputs:
       break_release:
         description: "Simulate a defective release (readiness fails; traffic must not move)"
         type: boolean
         default: false
+      report_page:
+        description: "Optional Power BI page (pageName) this release embeds"
+        type: string
+        default: ""
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: |
+          pip install -r app/requirements.txt pytest
+          pytest -q tests
+      - name: Script tests (stub kubectl, real kustomize rendering)
+        run: ./tests/scripts_test.sh
       - name: Build image
         run: docker build -t bi-portal:ci app
       - name: Smoke test container
@@ -25,6 +38,7 @@ jobs:
             bi-portal:ci
           sleep 4
           curl -fsS http://localhost:8000/healthz
+          curl -fsS http://localhost:8000/readyz
           curl -fsS http://localhost:8000/version
           docker rm -f portal
 
@@ -35,6 +49,7 @@ jobs:
     runs-on: self-hosted
     env:
       POWERBI_EMBED_URL: ${{ secrets.POWERBI_EMBED_URL }}
+      REPORT_PAGE: ${{ inputs.report_page || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build image into local Docker

@@ -1,0 +1,56 @@
+# Shared portal Deployment. Overlays add the colour (or naive) name suffix and
+# labels; scripts/lib.sh layers the per-release image, replicas and settings on top.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bi-portal
+spec:
+  replicas: 2
+  template:
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: portal
+          image: bi-portal:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DEPLOY_COLOR
+              value: "local"
+            - name: POWERBI_EMBED_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bi-config
+                  key: POWERBI_EMBED_URL
+          # Per-release settings: APP_VERSION, BREAK_RELEASE, REPORT_ID, REPORT_PAGE.
+          envFrom:
+            - configMapRef:
+                name: bi-release
+          lifecycle:
+            # Give the Service time to drop this pod from its endpoints before
+            # gunicorn receives SIGTERM, so in-flight and late requests still land.
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

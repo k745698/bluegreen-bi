@@ -12,4 +12,6 @@ RUN useradd --system --no-create-home portal
 USER portal
 
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:app"]
+# --graceful-timeout: on SIGTERM, finish in-flight requests for up to 20 s
+# (inside the pod's 30 s terminationGracePeriodSeconds, after the 5 s preStop).
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--graceful-timeout", "20", "app:app"]

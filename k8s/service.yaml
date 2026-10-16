@@ -1,0 +1,14 @@
+# The live Service. deploy.sh applies this on the very first deploy (which always
+# goes to blue); after that it only patches spec.selector.color to switch traffic.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bi-portal
+spec:
+  type: LoadBalancer
+  selector:
+    app: bi-portal
+    color: blue
+  ports:
+    - port: 8080
+      targetPort: 8000

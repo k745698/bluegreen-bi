@@ -73,3 +73,7 @@ k6-summary.html
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Throwaway kustomize layers written by scripts/lib.sh, and experiment output
+k8s/.release-*/
+results/

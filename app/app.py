@@ -1,15 +1,17 @@
 """BI portal: serves a Power BI secure-embed iframe and exposes health endpoints.
 
 Endpoints
-  /          portal page with the embedded Power BI report
-  /healthz   liveness: the process is up
-  /readyz    readiness: the release is fit to receive traffic (see run_readiness)
-  /version   which colour/version answered (used by the load test)
+  /               portal page with the embedded Power BI report
+  /healthz        liveness: the process is up
+  /readyz         readiness: this process is fit to receive traffic (no network call)
+  /powerbi-check  dependency gate: Power BI answers the embed URL (used by deploy.sh
+                  before cutover, never by a Kubernetes probe)
+  /version        which colour/version/report answered (used by the load tests)
 """
 import os
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, render_template_string
@@ -19,11 +21,28 @@ app = Flask(__name__)
 COLOR = os.getenv("DEPLOY_COLOR", "local")
 VERSION = os.getenv("APP_VERSION", "dev")
 EMBED_URL = os.getenv("POWERBI_EMBED_URL", "")
+# Optional per-release report selection, so a release can change what is embedded.
+# REPORT_ID replaces the reportId in the embed link; REPORT_PAGE sets pageName.
+REPORT_ID = os.getenv("REPORT_ID", "")
+REPORT_PAGE = os.getenv("REPORT_PAGE", "")
 # Simulates a defective release so the failed-Green path can be demonstrated.
 BREAK_RELEASE = os.getenv("BREAK_RELEASE", "false").lower() == "true"
 
-CHECK_TTL_SECONDS = 10  # avoid hitting Power BI on every probe
+CHECK_TTL_SECONDS = 10  # avoid hitting Power BI on every /powerbi-check call
 _cache = {"at": 0.0, "result": None}
+
+
+def embed_url():
+    """The embed link with this release's REPORT_ID / REPORT_PAGE applied."""
+    if not EMBED_URL or not (REPORT_ID or REPORT_PAGE):
+        return EMBED_URL
+    parsed = urlparse(EMBED_URL)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if REPORT_ID:
+        query["reportId"] = REPORT_ID
+    if REPORT_PAGE:
+        query["pageName"] = REPORT_PAGE
+    return urlunparse(parsed._replace(query=urlencode(query)))
 
 
 def validate_embed_url(url):
@@ -45,7 +64,7 @@ def check_reachable(url):
     Anything below HTTP 500 counts as reachable. This does NOT prove the report
     renders for a signed-in user: that needs a browser session.
     """
-    req = Request(url, method="GET", headers={"User-Agent": "bi-portal-readiness/1.0"})
+    req = Request(url, method="GET", headers={"User-Agent": "bi-portal-check/1.0"})
     try:
         with urlopen(req, timeout=5) as resp:
             return resp.status < 500, f"HTTP {resp.status}"
@@ -56,16 +75,22 @@ def check_reachable(url):
 
 
 def run_readiness():
+    """Process-level checks only. No network call, so a Power BI outage can never
+    make healthy live pods unready and empty the Service."""
     if BREAK_RELEASE:
         return {"ready": False, "checks": {"release": "BREAK_RELEASE set (simulated defect)"}}
-    checks = {}
-    valid, detail = validate_embed_url(EMBED_URL)
-    checks["embed_url"] = detail
+    valid, detail = validate_embed_url(embed_url())
+    return {"ready": valid, "checks": {"embed_url": detail}}
+
+
+def run_powerbi_check():
+    valid, detail = validate_embed_url(embed_url())
+    checks = {"embed_url": detail}
     if not valid:
-        return {"ready": False, "checks": checks}
-    reachable, detail = check_reachable(EMBED_URL)
+        return {"reachable": False, "checks": checks}
+    reachable, detail = check_reachable(embed_url())
     checks["powerbi_reachable"] = detail
-    return {"ready": reachable, "checks": checks}
+    return {"reachable": reachable, "checks": checks}
 
 
 PAGE = """<!doctype html>
@@ -80,17 +105,25 @@ PAGE = """<!doctype html>
   </style>
 </head>
 <body>
-  <header>BI Portal &middot; {{ color }} &middot; release {{ version }}</header>
+  <header>BI Portal &middot; {{ color }} &middot; release {{ version }}
+    {%- if report %} &middot; report {{ report }}{% endif %}</header>
   <iframe title="Power BI report" src="{{ embed_url }}" allowfullscreen="true"></iframe>
 </body>
 </html>"""
+
+
+def report_label():
+    return " / ".join(part for part in (REPORT_ID, REPORT_PAGE) if part)
 
 
 @app.get("/")
 def index():
     bar = {"blue": "#1f5fbf", "green": "#2a8a4a"}.get(COLOR, "#555555")
     resp = app.make_response(
-        render_template_string(PAGE, bar=bar, color=COLOR.upper(), version=VERSION, embed_url=EMBED_URL)
+        render_template_string(
+            PAGE, bar=bar, color=COLOR.upper(), version=VERSION,
+            report=report_label(), embed_url=embed_url(),
+        )
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -103,17 +136,23 @@ def healthz():
 
 @app.get("/readyz")
 def readyz():
+    result = run_readiness()
+    return jsonify(result), (200 if result["ready"] else 503)
+
+
+@app.get("/powerbi-check")
+def powerbi_check():
     now = time.time()
     if _cache["result"] is None or now - _cache["at"] > CHECK_TTL_SECONDS:
-        _cache["result"] = run_readiness()
+        _cache["result"] = run_powerbi_check()
         _cache["at"] = now
     result = _cache["result"]
-    return jsonify(result), (200 if result["ready"] else 503)
+    return jsonify(result), (200 if result["reachable"] else 503)
 
 
 @app.get("/version")
 def version():
-    return jsonify(color=COLOR, version=VERSION)
+    return jsonify(color=COLOR, version=VERSION, report_id=REPORT_ID, report_page=REPORT_PAGE)
 
 
 if __name__ == "__main__":
